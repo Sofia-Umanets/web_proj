@@ -84,10 +84,15 @@ class HTTPHandler(BaseHTTPRequestHandler):
             self.send_error(404, explain=f"Page {self.path} not found")
 
     def serve_static(self):
-        file_path = os.path.join('form_app', self.path.lstrip('/'))
+        static_dir = "/app/lesson4/form_app/static"
+        
+        relative_path = os.path.relpath(self.path, '/static/')
+        
+        #полный путь к файлу
+        file_path = os.path.join(static_dir, relative_path)
         
         if not os.path.isfile(file_path):
-            self.send_error(404, explain="File not found")
+            self.send_error(404, explain=f"File not found: {file_path}")
             return
 
         try:
@@ -142,7 +147,6 @@ def root(request: Request) -> Response:
         data[name] = unquote(request.cookies[name].value)
     data["prog_languages"] = data.get("prog_languages", "").split("|")
 
-    # Получаем шаблон через объект Environment
     content = env.get_template("index.html").render(**data)
     return Response(
         status=200,
@@ -157,7 +161,6 @@ def form(_: Request, content: dict) -> Response:
     expires = None
     cookies = SimpleCookie()
 
-    # Сохраняем состояние галочки "С контрактом ознакомлен" сразу после получения данных
     cookies["contract_agreed"] = "1" if content.get("contract_agreed", False) else "0"
     if expires is not None:
         cookies["contract_agreed"]["expires"] = formatdate(expires, usegmt=True)
@@ -210,7 +213,6 @@ def form(_: Request, content: dict) -> Response:
 @HTTPHandler.get("/success")
 def success(request: Request) -> Response:
     headers = {"Content-Type": "text/html"}
-    # Получаем шаблон через объект Environment
     content = env.get_template("success.html").render()
     return Response(
         status=200,
