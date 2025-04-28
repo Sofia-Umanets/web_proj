@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 from email.utils import formatdate, parsedate_to_datetime
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
+import re
 from urllib.parse import parse_qs, quote, unquote
 import mimetypes
 import os
@@ -11,7 +12,7 @@ import hashlib
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import ValidationError
 
-from form_app.database import save_user_form, find_user_by_login, update_user_data, check_password
+from form_app.database import get_user_programming_languages, save_user_form, find_user_by_login, update_user_data, check_password, update_user_form_by_id
 from form_app.exceptions import InvalidRequestError
 from form_app.models import Request, Response
 from form_app.validators import UserFormModel
@@ -46,9 +47,10 @@ def get_urlencoded_data(request: Request, rfile) -> dict:
             query[name] = value[0]
     return query
 
-
 class HTTPHandler(BaseHTTPRequestHandler):
-    paths = {"get": {}, "post": {}}
+    # routes["GET"] = [ (pattern, handler), … ]
+    # routes["POST"] = [ (pattern, handler), … ]
+    routes = {"GET": [], "POST": []}
 
     @property
     def req(self) -> Request:
@@ -57,91 +59,132 @@ class HTTPHandler(BaseHTTPRequestHandler):
         return Request(headers=headers, cookies=cookies)
 
     def resp(self, response: Response):
+        # статус + обычные заголовки
         self.send_response(response.status)
-
-        for name, value in response.headers.items():
-            self.send_header(name, value)
-        for name in response.cookies:
-            self.send_header(
-                "Set-Cookie", response.cookies[name].OutputString()
-            )
+        for k, v in response.headers.items():
+            self.send_header(k, v)
+        # cookies
+        for morsel in response.cookies.values():
+            self.send_header("Set-Cookie", morsel.OutputString())
         self.end_headers()
-
+        # тело
         if response.content:
-            if isinstance(response.content, str):
-                self.wfile.write(response.content.encode())
-            else:
-                self.wfile.write(response.content)
+            body = (
+                response.content.encode()
+                if isinstance(response.content, str)
+                else response.content
+            )
+            self.wfile.write(body)
 
     @classmethod
-    def get(cls, path: str):
-        def decorator(function):
-            def inner(self):
-                self.resp(function(self.req))
-            cls.paths["get"][path] = inner
-            return inner
+    def get(cls, path_pattern: str):
+        """
+        Декоратор GET.
+        path_pattern — строка-ре регулярка без ^ и $, можно с (?P<name>…).
+        """
+        pattern = re.compile(rf"^{path_pattern}$")
+        def decorator(func):
+            def handler(self, **kwargs):
+                resp = func(self.req, **kwargs)
+                self.resp(resp)
+            cls.routes["GET"].append((pattern, handler))
+            return func
         return decorator
+
+    @classmethod
+    def post(cls, path_pattern: str, *, urlencoded: bool = False):
+        """
+        Декоратор POST.
+        urlencoded=True — парсим тело через get_urlencoded_data.
+        """
+        pattern = re.compile(rf"^{path_pattern}$")
+        def decorator(func):
+            def handler(self, **kwargs):
+                request = self.req
+                data = None
+                if urlencoded:
+                    data = get_urlencoded_data(request, self.rfile)
+                    resp = func(request, data, **kwargs)
+                else:
+                    resp = func(request, **kwargs)
+                self.resp(resp)
+            cls.routes["POST"].append((pattern, handler))
+            return func
+        return decorator
+
+    def serve_static(self):
+        """Отдаём /static/... из папки form_app/static/..."""
+        rel = self.path.lstrip("/")
+        full = os.path.join("form_app", rel)
+        if not os.path.isfile(full):
+            self.send_error(404, explain="File not found")
+            return
+        try:
+            with open(full, "rb") as f:
+                data = f.read()
+            ctype, _ = mimetypes.guess_type(full)
+            self.send_response(200)
+            self.send_header("Content-Type", ctype or "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except PermissionError:
+            self.send_error(403, explain="Access denied")
+        except Exception:
+            self.send_error(500, explain="Error reading file")
 
     def do_GET(self):
         try:
+            # 1) Статика
             if self.path.startswith("/static/"):
-                self.serve_static()
-            else:
-                self.paths["get"][self.path](self)
-        except KeyError:
+                return self.serve_static()
+
+            # 2) Пробуем все GET-роуты
+            for pattern, handler in self.routes["GET"]:
+                m = pattern.match(self.path)
+                if not m:
+                    continue
+                kwargs = m.groupdict()
+                # авто-кастинг цифр
+                for k, v in kwargs.items():
+                    if v.isdigit():
+                        kwargs[k] = int(v)
+                return handler(self, **kwargs)
+
+            # 3) Ничего не подошло
             self.send_error(404, explain=f"Page {self.path} not found")
 
-    def serve_static(self):
-        file_path = os.path.join("form_app", self.path.lstrip("/"))
-
-        if not os.path.isfile(file_path):
-            self.send_error(404, explain="File not found")
-            return
-
-        try:
-            with open(file_path, "rb") as f:
-                content = f.read()
-
-            content_type, _ = mimetypes.guess_type(file_path)
-
-            self.send_response(200)
-            self.send_header("Content-Type", content_type or "application/octet-stream")
-            self.send_header("Content-Length", str(len(content)))
-            self.end_headers()
-            self.wfile.write(content)
-
-        except PermissionError:
-            self.send_error(403, explain="Access denied")
-        except IOError:
-            self.send_error(500, explain="Error reading file")
-
-    @classmethod
-    def post(cls, path: str, *, urlencoded: bool = False):
-        def decorator(function):
-            def inner(self):
-                request = self.req
-                content = None
-                if urlencoded:
-                    content = get_urlencoded_data(request, self.rfile)
-                self.resp(function(request, content))
-            cls.paths["post"][path] = inner
-            return inner
-        return decorator
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            self.send_error(500, explain=f"Server error: {e}")
 
     def do_POST(self):
         try:
-            self.paths["post"][self.path](self)
+            for pattern, handler in self.routes["POST"]:
+                m = pattern.match(self.path)
+                if not m:
+                    continue
+                kwargs = m.groupdict()
+                for k, v in kwargs.items():
+                    if v.isdigit():
+                        kwargs[k] = int(v)
+                return handler(self, **kwargs)
+
+            self.send_error(404, explain=f"Page {self.path} not found")
+
         except InvalidRequestError as e:
             self.send_error(400, explain=str(e))
-        except KeyError:
-            self.send_error(400, explain="invalid URL")
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            self.send_error(500, explain=f"Server error: {e}")
 
-
+# Основные обработчики маршрутов
 @HTTPHandler.get("/")
 def root(request: Request) -> Response:
+    """Главная страница"""
     headers = {"Content-Type": "text/html"}
     cookies = SimpleCookie()
-    # Удаляем устаревшие ошибки и success
+    
     for name in request.cookies:
         if name.endswith("_err") or name == "success":
             cookies[name] = request.cookies[name]
@@ -160,7 +203,6 @@ def root(request: Request) -> Response:
 
 @HTTPHandler.post("/submit", urlencoded=True)
 def form(_: Request, content: dict) -> Response:
-    expires = None
     cookies = SimpleCookie()
 
     try:
@@ -168,10 +210,20 @@ def form(_: Request, content: dict) -> Response:
     except ValidationError as e:
         for err in e.errors():
             location, msg = err["loc"][0], err["msg"]
+            
+            # Обработка различных форматов ошибок от Pydantic
             if msg.startswith("Value error, "):
-                msg = msg[len("Value error, ") :]
+                msg = msg[len("Value error, "):]
+            elif "at most 500 characters" in msg:
+                msg = "Биография не должна превышать 500 символов"
+            elif "not a valid email address" in msg:
+                msg = "Электронная почта имеет неверный формат"
+            elif "invalid datetime format" in msg or "Invalid date format" in msg:
+                msg = "Некорректная дата рождения"
+            
             cookies[f"{location}_err"] = quote(msg.capitalize())
 
+        # При ошибке сохраняем значения для повторного отображения
         for field in UserFormModel.model_fields:
             value = content.get(field, "")
             if isinstance(value, list):
@@ -184,17 +236,17 @@ def form(_: Request, content: dict) -> Response:
 
     login, password = save_user_form(form_data)
 
-    expires = (datetime.now() + timedelta(days=365)).timestamp()
+    # Очищаем все куки с данными формы
+    for field in UserFormModel.model_fields:
+        cookies[field] = ""
+        cookies[field]["expires"] = EPOCH
+        cookies[f"{field}_err"] = ""
+        cookies[f"{field}_err"]["expires"] = EPOCH
+
+    # Устанавливаем только логин и пароль для отображения на странице успеха
     cookies["success"] = "1"
     cookies["login"] = login
-    cookies["password"] = password  # Для отображения при успехе
-
-    for field in UserFormModel.model_fields:
-        value = content.get(field, "")
-        if isinstance(value, list):
-            value = "|".join(value)
-        cookies[field] = quote(value)
-        cookies[field]["expires"] = formatdate(expires, usegmt=True)
+    cookies["password"] = password
 
     return Response(
         status=303, headers={"Location": "/success"}, cookies=cookies, content=""
@@ -293,33 +345,41 @@ def edit_form(request: Request) -> Response:
             status=303, headers={"Location": "/login"}, cookies=cookies, content=""
         )
 
+    # Проверяем, есть ли ошибки валидации
+    has_validation_errors = any(name.endswith("_err") for name in request.cookies)
+    
+    # Формируем данные для отображения
     data = {}
-    for field in UserFormModel.model_fields:
-        cookie_val = request.cookies.get(field)
-        if cookie_val:
-            if field == "prog_languages":
-                val = unquote(cookie_val.value)
-                data[field] = val.split("|") if val else []
-            else:
-                data[field] = unquote(cookie_val.value)
-        else:
-            val = user.get(field)
-            if val is None:
-                data[field] = ""
-            elif field == "prog_languages":
-                if isinstance(val, str):
+    
+    # Если есть ошибки валидации, используем данные из кук
+    if has_validation_errors:
+        for field in UserFormModel.model_fields:
+            cookie_val = request.cookies.get(field)
+            if cookie_val:
+                if field == "prog_languages":
+                    val = unquote(cookie_val.value)
                     data[field] = val.split("|") if val else []
-                elif isinstance(val, list):
-                    data[field] = val
                 else:
-                    data[field] = []
+                    data[field] = unquote(cookie_val.value)
             else:
-                data[field] = val
-
-    # Коррекция phone
-    if "phone" not in data or not data["phone"]:
-        data["phone"] = user.get("phone_number", "")
-
+                data[field] = ""
+                
+        # Проверяем, есть ли поле phone, если нет, берем из phone_number
+        if 'phone' not in data or not data['phone']:
+            data['phone'] = user.get('phone_number', '')
+    else:
+        # Если ошибок нет, берем данные из БД
+        data = {
+            'full_name': user.get('full_name', ''),
+            'phone': user.get('phone_number', ''),
+            'email': user.get('email', ''),
+            'birth_date': user.get('birth_date', ''),
+            'gender': user.get('gender', ''),
+            'bio': user.get('bio', ''),
+            'prog_languages': user.get('prog_languages', [])
+        }
+    
+    # Обрабатываем ошибки из кук
     errors = {}
     for name in request.cookies:
         if name.endswith("_err"):
@@ -331,6 +391,13 @@ def edit_form(request: Request) -> Response:
     if success_edit:
         cookies["success_edit"] = ""
         cookies["success_edit"]["expires"] = EPOCH
+        
+        # При успешном редактировании очищаем все куки с данными формы
+        if not has_validation_errors:
+            for field in UserFormModel.model_fields:
+                if field in request.cookies:
+                    cookies[field] = ""
+                    cookies[field]["expires"] = EPOCH
 
     context = data.copy()
     context.update(errors)
@@ -362,11 +429,20 @@ def edit_post(request: Request, content: dict) -> Response:
     except ValidationError as e:
         for err in e.errors():
             location, msg = err["loc"][0], err["msg"]
+            
+            # Обработка различных форматов ошибок от Pydantic
             if msg.startswith("Value error, "):
-                msg = msg[len("Value error, ") :]
+                msg = msg[len("Value error, "):]
+            elif "at most 500 characters" in msg:
+                msg = "Биография не должна превышать 500 символов"
+            elif "not a valid email address" in msg:
+                msg = "Электронная почта имеет неверный формат"
+            elif "invalid datetime format" in msg or "Invalid date format" in msg:
+                msg = "Некорректная дата рождения"
+            
             cookies[f"{location}_err"] = quote(msg.capitalize())
 
-        # сохранение значений, включая список языков программирования
+        # При ошибке сохраняем значения для повторного отображения
         for field in UserFormModel.model_fields:
             value = content.get(field, "")
             if isinstance(value, list):
@@ -377,41 +453,20 @@ def edit_post(request: Request, content: dict) -> Response:
             status=303, headers={"Location": "/edit"}, cookies=cookies, content=""
         )
 
+    # Обновляем данные пользователя в БД
     update_user_data(login, form_data)
 
-    expires = (datetime.now() + timedelta(days=365)).timestamp()
-
-    # Очищаем все поля кроме prog_languages
+    # Очищаем все куки с данными формы только при успешном обновлении
     for field in UserFormModel.model_fields:
-        if field != "prog_languages":
-            cookies[field] = ""
-            cookies[field]["expires"] = EPOCH
-            cookies[f"{field}_err"] = ""
-            cookies[f"{field}_err"]["expires"] = EPOCH
+        cookies[field] = ""
+        cookies[field]["expires"] = EPOCH
+        cookies[f"{field}_err"] = ""
+        cookies[f"{field}_err"]["expires"] = EPOCH
 
-    # Сохраняем выбранные языки программирования в куку
-    prog_langs_str = "|".join(form_data.prog_languages) if form_data.prog_languages else ""
-    cookies["prog_languages"] = quote(prog_langs_str)
-    cookies["prog_languages"]["expires"] = formatdate(expires, usegmt=True)
-
+    # Устанавливаем флаг успешного обновления
     cookies["success_edit"] = "1"
-    cookies["success_edit"]["expires"] = formatdate(expires, usegmt=True)
+    cookies["success_edit"]["expires"] = formatdate((datetime.now() + timedelta(days=1)).timestamp(), usegmt=True)
 
     return Response(
         status=303, headers={"Location": "/edit"}, cookies=cookies, content=""
-    )
-
-
-@HTTPHandler.get("/logout")
-def logout(request: Request) -> Response:
-    cookies = SimpleCookie()
-    session_cookie = request.cookies.get("session_id")
-    if session_cookie and session_cookie.value in sessions:
-        del sessions[session_cookie.value]
-
-    cookies["session_id"] = ""
-    cookies["session_id"]["expires"] = EPOCH
-
-    return Response(
-        status=303, headers={"Location": "/"}, cookies=cookies, content=""
     )

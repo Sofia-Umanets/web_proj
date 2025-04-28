@@ -10,10 +10,10 @@ services:
     env_file:
       - .env
     volumes:
-      - ./lesson4:/app/lesson4
+      - ./lesson5:/app/lesson5
     depends_on:
       - db
-    command: bash -c "pip install python-dotenv && python /app/lesson4/main.py"
+    command: bash -c "pip install python-dotenv && python /app/lesson5/main.py"
 
   db:
     image: mysql:8.0

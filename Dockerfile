@@ -11,4 +11,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . /app/
 
 
-CMD ["python", "/app/lesson4/main.py"] CREATE DATABASE IF NOT EXISTS formdb;
+CMD ["python", "/app/lesson5/main.py"] CREATE DATABASE IF NOT EXISTS formdb;

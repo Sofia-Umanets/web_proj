@@ -120,6 +120,20 @@ def find_user_by_login(login: str, **kwargs):
     QUERY = "SELECT * FROM user_forms WHERE login = %s LIMIT 1"
     cursor.execute(QUERY, (login,))
     user = cursor.fetchone()
+    
+    if user:
+        # Получаем языки программирования для этого пользователя
+        languages_query = """
+        SELECT pl.name 
+        FROM programming_languages pl
+        JOIN user_prog_languages upl ON pl.lang_id = upl.lang_id
+        WHERE upl.form_id = %s
+        """
+        
+        cursor.execute(languages_query, (user['form_id'],))
+        languages = [row['name'] for row in cursor.fetchall()]
+        user['prog_languages'] = languages
+    
     return user
 
 @database_connection
@@ -182,4 +196,93 @@ def update_user_data(login: str, form_data: UserFormModel, **kwargs):
     print(f"User data updated for login: {login}")
 
 
+
+@database_connection
+def get_user_form_by_id(form_id: int, **kwargs):
+    conn = kwargs["connection"]
+    cursor = conn.cursor(dictionary=True)
+
+    QUERY = """
+        SELECT uf.full_name, uf.phone_number, uf.email, uf.birth_date, uf.gender, uf.bio, 
+               GROUP_CONCAT(pl.name SEPARATOR ', ') as prog_languages
+        FROM user_forms uf
+        LEFT JOIN user_prog_languages upl ON uf.form_id = upl.form_id
+        LEFT JOIN programming_languages pl ON upl.lang_id = pl.lang_id
+        WHERE uf.form_id = %s
+        GROUP BY uf.form_id
+    """
+    cursor.execute(QUERY, (form_id,))
+    user_form = cursor.fetchone()
+    return user_form
+
+@database_connection
+def update_user_form_by_id(form_id: int, form_data: UserFormModel, **kwargs):
+    conn = kwargs["connection"]
+    cursor = conn.cursor()
+
+    UPDATE_SQL = (
+        "UPDATE user_forms SET "
+        "full_name = %s, "
+        "phone_number = %s, "
+        "email = %s, "
+        "birth_date = %s, "
+        "gender = %s, "
+        "bio = %s "
+        "WHERE form_id = %s"
+    )
+
+    update_data = (
+        form_data.full_name,
+        form_data.phone,
+        form_data.email,
+        form_data.birth_date,
+        form_data.gender,
+        form_data.bio,
+        form_id,
+    )
+
+    cursor.execute(UPDATE_SQL, update_data)
+
+    # Обновляем языки программирования:
+
+    # Сначала удаляем старые связи
+    DELETE_LANGS_SQL = "DELETE FROM user_prog_languages WHERE form_id = %s"
+    cursor.execute(DELETE_LANGS_SQL, (form_id,))
+
+    # Вставляем новые
+    prog_languages_values = form_data.prog_languages
+    if prog_languages_values:
+        SELECT_PROG_LANGS_SQL = (
+            "SELECT lang_id FROM programming_languages WHERE name IN ({})".format(
+                ','.join(['%s'] * len(prog_languages_values))
+            )
+        )
+        cursor.execute(SELECT_PROG_LANGS_SQL, prog_languages_values)
+        lang_ids = [row[0] for row in cursor.fetchall()]
+
+        INSERT_USER_LANGS_SQL = (
+            "INSERT INTO user_prog_languages (lang_id, form_id) "
+            "VALUES (%s, %s)"
+        )
+        for lang_id in lang_ids:
+            cursor.execute(INSERT_USER_LANGS_SQL, (lang_id, form_id))
+
+    conn.commit()
+
+
+@database_connection
+def get_user_programming_languages(login: str, **kwargs):
+    conn = kwargs["connection"]
+    cursor = conn.cursor()
+    
+    query = """
+    SELECT pl.name 
+    FROM programming_languages pl
+    JOIN user_prog_languages upl ON pl.lang_id = upl.lang_id
+    JOIN user_forms uf ON upl.form_id = uf.form_id
+    WHERE uf.login = %s
+    """
+    
+    cursor.execute(query, (login,))
+    return [row[0] for row in cursor.fetchall()]
 
