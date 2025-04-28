@@ -135,11 +135,10 @@ class HTTPHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         try:
-            # 1) Статика
             if self.path.startswith("/static/"):
                 return self.serve_static()
 
-            # 2) Пробуем все GET-роуты
+            Пробуем все GET-роуты
             for pattern, handler in self.routes["GET"]:
                 m = pattern.match(self.path)
                 if not m:
@@ -151,7 +150,6 @@ class HTTPHandler(BaseHTTPRequestHandler):
                         kwargs[k] = int(v)
                 return handler(self, **kwargs)
 
-            # 3) Ничего не подошло
             self.send_error(404, explain=f"Page {self.path} not found")
 
         except Exception as e:
@@ -178,7 +176,7 @@ class HTTPHandler(BaseHTTPRequestHandler):
             import traceback; traceback.print_exc()
             self.send_error(500, explain=f"Server error: {e}")
 
-# Основные обработчики маршрутов
+
 @HTTPHandler.get("/")
 def root(request: Request) -> Response:
     """Главная страница"""
@@ -348,7 +346,6 @@ def edit_form(request: Request) -> Response:
     # Проверяем, есть ли ошибки валидации
     has_validation_errors = any(name.endswith("_err") for name in request.cookies)
     
-    # Формируем данные для отображения
     data = {}
     
     # Если есть ошибки валидации, используем данные из кук
