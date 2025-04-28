@@ -12,14 +12,18 @@ INSERT INTO programming_languages (name) VALUES
 ('Java'), ('Haskell'), ('Clojure'), ('Prolog'), ('Scala'), ('Go');
 
 CREATE TABLE user_forms (
-form_id INT AUTO_INCREMENT PRIMARY KEY,
-full_name VARCHAR(150) NOT NULL,
-phone_number VARCHAR(20) NOT NULL,
-email VARCHAR(100) NOT NULL,
-birth_date DATE NOT NULL,
-gender ENUM('male', 'female') NOT NULL,
-bio TEXT NOT NULL,
-created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    form_id INT AUTO_INCREMENT PRIMARY KEY,
+    full_name VARCHAR(150) NOT NULL,
+    phone_number VARCHAR(20) NOT NULL,
+    email VARCHAR(100) NOT NULL,
+    birth_date DATE NOT NULL,
+    gender ENUM('male', 'female') NOT NULL,
+    bio TEXT NOT NULL,
+    login VARCHAR(32) NOT NULL UNIQUE,
+    password_hash VARCHAR(64) NOT NULL,
+    salt VARCHAR(32) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+>>>>>>> 58f7107 (pr5)
 );
 
 CREATE TABLE user_prog_languages (
