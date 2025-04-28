@@ -1,0 +1,61 @@
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    line-height: 1.6;
+    background-color: #e9bdf7;
+}
+
+.bg-custom {
+    background-color: #690172;
+}
+
+.btn.btn-primary {
+    background-color: #690172;
+    border-color: #1d1c1c;
+  }
+  
+  .btn.btn-primary:hover {
+    background-color: #470449;
+    border-color: #111010;
+  }
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+main .container {
+    background: #b60707;
+    border-radius: 10px;
+    box-shadow: 0 0 15px rgba(0,0,0,0.1);
+}
+
+h1, h2 {
+    color: #333;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+label {
+    font-weight: 600;
+    display: block;
+    margin-bottom: 5px;
+}
+
+select[multiple] {
+    height: 150px;
+}
+
+
+.success-icon {
+    font-size: 72px;
+    color: #28a745;
+    margin-bottom: 20px;
+}
+
+footer {
+    text-align: center;
+}
+
