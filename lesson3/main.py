@@ -8,7 +8,7 @@ def main():
     port = 8000  # Соответствует порту, указанному в docker-compose.yml
 
     httpd = HTTPServer((host, port), FormHandler)
-    print(f"Сервер запущен на http://{host}:{port}")
+    print(f"Сервер запущен на https://{host}:{port}")
     httpd.serve_forever()
 
 
